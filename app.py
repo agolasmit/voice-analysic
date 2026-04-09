@@ -222,15 +222,38 @@ def transcribe_audio(file_path: str, language_code: str = "unknown"):
 # ANALYSIS PROMPTS
 # ─────────────────────────────────────────────
 
-STANDARD_SYSTEM_PROMPT = """You are a call center analyst. Analyze the transcript and return ONLY a valid JSON object with exactly these fields:
+STANDARD_SYSTEM_PROMPT = """You are an expert call center analyst for a pharmaceutical software company.
+Analyze the support/complaint call transcript and return ONLY a valid JSON object.
+
+Extract the following fields accurately. Use null if information is not mentioned.
+
 {
   "sentiment": "positive" | "negative" | "neutral",
   "emotion": "happy" | "frustrated" | "angry" | "confused" | "satisfied" | "neutral",
   "customer_satisfaction": <integer 1-10>,
   "confidence_score": <float 0.0-1.0>,
-  "summary": "<2-3 sentence summary of the call>"
+
+  "summary": "<2-3 sentence clear summary of the call>",
+
+  "issue_category": "billing" | "software_error" | "feature_request" | "training_needed" | "complaint" | "payment_issue" | "integration_issue" | "performance_slow" | "other" | null,
+  "issue_subcategory": "<specific issue like 'invoice not generating', 'login problem', etc. or null>",
+  
+  "urgency_level": "high" | "medium" | "low" | null,
+  
+  "follow_up_required": <true/false>,
+  "follow_up_reason": "<short reason why follow-up is needed or null>",
+  "suggested_callback_time": "<e.g. 'tomorrow morning', 'within 2 hours', 'next week' or null>",
+  
+  "callback_requested_by_customer": <true/false>,
+  "product_module_mentioned": ["Inventory", "Billing", "Online Ordering", "Reports", "Staff Login", ...] or [],
+  
+  "resolution_status": "resolved" | "partially_resolved" | "unresolved" | null,
+  "resolution_summary": "<what was resolved or what is still pending>",
+  
+  "key_customer_concern": "<exact main pain point in customer's words or null>"
 }
-No markdown. No extra text. JSON only."""
+
+No markdown. No extra text. Return ONLY valid JSON."""
 
 LEAD_GEN_SYSTEM_PROMPT = """You are an expert at extracting structured business information from Indian pharmaceutical sales calls.
 
