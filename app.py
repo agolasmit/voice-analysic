@@ -171,8 +171,8 @@ def _transcribe_whisper(file_path: str, language_code: str = "unknown"):
         raise RuntimeError(f"Whisper failure: {data.get('error', 'unknown')}")
 
     text = (
-        data.get("hindi")
-        or data.get("english")
+        data.get("english")
+        or data.get("hindi")
         or data.get("text")
         or data.get("transcript")
         or ""
