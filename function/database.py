@@ -155,3 +155,28 @@ def save_call_analysis(
     finally:
         cur.close()
         conn.close()
+
+
+def get_call_analysis():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT * FROM call_analysis_details")
+
+        rows = cur.fetchall()
+
+        # column names
+        colnames = [desc[0] for desc in cur.description]
+
+        # convert each row → dict
+        results = [dict(zip(colnames, row)) for row in rows]
+
+        return results
+
+    except Exception as e:
+        logger.error(f"❌ DB fetch failed: {str(e)}")
+        raise
+    finally:
+        cur.close()
+        conn.close()
