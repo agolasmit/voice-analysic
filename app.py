@@ -35,7 +35,7 @@ logger.info(f"Transcription backend: {'Whisper' if USE_WHISPER else 'Sarvam AI'}
 # EXOTEL CONFIG
 # ─────────────────────────────────────────────
 
-EXOTEL_ACCOUNT_SID = os.getenv("EXOTEL_ACCOUNT_SID")  # e.g. "evital1"
+EXOTEL_ACCOUNT_SID = os.getenv("EXOTEL_ACCOUNT_SID")
 EXOTEL_API_KEY = os.getenv("EXOTEL_API_KEY")
 EXOTEL_API_TOKEN = os.getenv("EXOTEL_API_TOKEN")
 EXOTEL_BASE_URL = os.getenv("EXOTEL_BASE_URL", "https://api.exotel.com/v1/Accounts")
@@ -207,12 +207,13 @@ KNOWN VOCABULARY — always correct to these exact spellings when phonetically s
 CORRECTION RULES:
 1. Fix all words from KNOWN VOCABULARY list above — this is your highest priority
 2. Fix obvious transcription errors using surrounding context
-3. Preserve sentence meaning exactly — do NOT paraphrase or summarize
-4. Add basic punctuation: । for sentence end, ? for questions, ... for hesitation pauses
-5. Keep English words that were spoken in English (e.g. "OK", "order")
-6. Do NOT translate anything to English
-7. Do NOT add any explanation — return ONLY the corrected Hindi text
-8. If unsure about a word, keep the original
+3. ONLY fix spelling mistakes. Do NOT change sentence structure.
+4. If input is repetitive or broken, keep it as-is.
+5. Add basic punctuation: । for sentence end, ? for questions, ... for hesitation pauses
+6. Keep English words that were spoken in English (e.g. "OK", "order")
+7. Do NOT translate anything to English
+8. Do NOT add any explanation — return ONLY the corrected Hindi text
+9. If unsure about a word, keep the original
 
 Return ONLY the corrected Hindi transcript."""
 
@@ -379,48 +380,98 @@ def process_call(call: dict, call_type: str = "general") -> dict:
 # ANALYSIS PROMPTS & FUNCTIONS
 # ─────────────────────────────────────────────
 
-STANDARD_SYSTEM_PROMPT = """You are an expert call center analyst for a pharmaceutical software company.
+STANDARD_SYSTEM_PROMPT = """You are an expert multilingual call center analyst for a pharmaceutical software company (Pillo App / Evital Software).
 
-Analyze the given support/complaint call transcript and return ONLY a valid JSON object.
+Your job has TWO steps:
+1. CLEAN & NORMALIZE the transcript (Hindi / Hinglish / noisy ASR text)
+2. ANALYZE the cleaned transcript and return ONLY a valid JSON
+
+-----------------------------------
+STEP 1: TRANSCRIPT CLEANING RULES
+-----------------------------------
+- Fix broken, incorrect, or phonetically गलत Hindi words
+- Convert Hinglish / mixed language into proper, natural Hindi
+- Remove noise, filler, repetition (e.g., "hello hello", "haan bolo", etc.)
+- Correct sentence structure while preserving original meaning
+- Do NOT add new information
+- If a word is unclear, replace it with the most logical word based on context
+- Preserve important intent words like: ride, pickup, order, network, payment, etc.
+- Output of this step is an internally cleaned transcript (DO NOT print it)
+
+-----------------------------------
+STEP 2: CALL ANALYSIS
+-----------------------------------
+
+SPEAKER IDENTIFICATION RULES:
+- Speaker 1 = CUSTOMER side:
+  * "patient" → buys medicine
+  * "chemist" → pharmacy owner
+  * "rider" → delivery person
+- Speaker 2 = SUPPORT AGENT
 
 STRICT RULES:
-- Output MUST be valid JSON (no markdown, no explanation, no extra text)
+- Output MUST be valid JSON only (no extra text)
 - Do NOT omit any field
-- If information is missing, use null
-- Follow exact data types strictly
+- If info missing → use null
 - Use ONLY allowed enum values
-- Keep summary concise (2-3 sentences)
-- Do NOT hallucinate or assume facts not present
+- Keep summaries concise (2–3 sentences)
+- Do NOT hallucinate
 
+-----------------------------------
 JSON SCHEMA:
+-----------------------------------
 
 {
-  "sentiment": "positive" | "negative" | "neutral",
-  "emotion": "happy" | "frustrated" | "angry" | "confused" | "satisfied" | "neutral",
-  "customer_satisfaction": integer (1-10) | null,
-  "confidence_score": float (0.0-1.0),
-  "summary": string,
-  "issue_category": "billing" | "software_error" | "feature_request" | "training_needed" | "complaint" | "payment_issue" | "integration_issue" | "performance_slow" | "operations_issue" | "other" | null,
-  "issue_subcategory": string | null,
-  "urgency_level": "high" | "medium" | "low" | null,
-  "follow_up_required": boolean,
-  "follow_up_reason": string | null,
-  "suggested_callback_time": string | null,
-  "callback_requested_by_customer": boolean,
-  "product_module_mentioned": array of strings (use only: "Inventory", "Billing", "Online Ordering", "Reports", "Staff Login"),
-  "resolution_status": "resolved" | "partially_resolved" | "unresolved" | null,
-  "resolution_summary": string | null,
-  "key_customer_concern": string | null
+  "speaker_1": {
+    "role": "patient" | "chemist" | "rider",
+    "sentiment": "positive" | "negative" | "neutral",
+    "emotion": "happy" | "frustrated" | "angry" | "confused" | "satisfied" | "neutral",
+    "summary": string
+  },
+  "speaker_2": {
+    "role": "support_agent",
+    "sentiment": "positive" | "negative" | "neutral",
+    "emotion": "happy" | "frustrated" | "angry" | "confused" | "satisfied" | "neutral",
+    "summary": string
+  },
+  "overall": {
+    "sentiment": "positive" | "negative" | "neutral",
+    "emotion": "happy" | "frustrated" | "angry" | "confused" | "satisfied" | "neutral",
+    "customer_satisfaction": integer (1-10) | null,
+    "confidence_score": float (0.0-1.0),
+    "summary": string,
+    "issue_category": "billing" | "software_error" | "feature_request" | "training_needed" | "complaint" | "payment_issue" | "integration_issue" | "performance_slow" | "operations_issue" | "other" | null,
+    "issue_subcategory": string | null,
+    "urgency_level": "high" | "medium" | "low" | null,
+    "follow_up_required": boolean,
+    "follow_up_reason": string | null,
+    "suggested_callback_time": string | null,
+    "callback_requested_by_customer": boolean,
+    "product_module_mentioned": array of strings (use only: "Inventory", "Billing", "Online Ordering", "Reports", "Staff Login"),
+    "resolution_status": "resolved" | "partially_resolved" | "unresolved" | null,
+    "resolution_summary": string | null,
+    "key_customer_concern": string | null
+  }
 }
 
-CONTEXT UNDERSTANDING RULES:
-- If caller is delivery staff: complaints about no orders → issue_category = "operations_issue", issue_subcategory = "no orders assigned"
+-----------------------------------
+CONTEXT RULES:
+-----------------------------------
+- Rider + no orders → issue_category = "operations_issue", subcategory = "no orders assigned"
 - Use "software_error" ONLY for bugs/crashes
-- Use "performance_slow" ONLY when system/app is slow
-- Use "training_needed" if user doesn't know how to use system
-- Use "feature_request" for new feature demands
+- Use "performance_slow" ONLY for slowness
+- Use "training_needed" if user doesn't know how system works
+- Use "feature_request" for new features
 
-Return ONLY JSON."""
+-----------------------------------
+FINAL INSTRUCTION:
+-----------------------------------
+- First clean the transcript internally
+- Then analyze
+- Return ONLY JSON
+
+INPUT TRANSCRIPT:
+{transcript}"""
 
 LEAD_GEN_SYSTEM_PROMPT = """..."""  # Keep your full LEAD_GEN_SYSTEM_PROMPT here
 
@@ -499,6 +550,7 @@ def upload():
     if not file.filename:
         return jsonify({"error": "Empty filename"}), 400
 
+    url = request.form.get("url", "");
     call_id = request.form.get("call_id", 0)
     customer_id = request.form.get("customer_id", 0)
     call_type = request.form.get("call_type", "general")
