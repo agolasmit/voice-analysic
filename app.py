@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from groq import Groq
 
 # Import from functions
-from function.database import save_call_analysis, get_call_analysis
+from function.database import (save_call_analysis,get_call_analysis,get_existing_analysis,)
 
 load_dotenv()
 
@@ -55,6 +55,7 @@ def _cleanup(path: str):
             os.remove(path)
     except Exception:
         pass
+
 
 # ─────────────────────────────────────────────
 # TRANSCRIPTION  (inline — flag-based)
@@ -333,6 +334,21 @@ def process_call(call: dict, call_type: str = "general") -> dict:
     if not recording_url:
         return {"call_sid": call_sid, "skipped": True, "reason": "no_recording"}
 
+    existing = get_existing_analysis(call_sid)
+    if existing:
+        logger.info(f"Cache hit for {call_sid} — returning saved analysis")
+        return {
+            "call_sid": call_sid,
+            "skipped": False,
+            "from": from_number,
+            "direction": direction,
+            "duration": duration,
+            "transcript": existing["transcript"],
+            "analysis": existing["analysis"],
+            "cached": True,
+        }
+    # ────────────────────────────────────────────────────────────────────────
+
     tmp_path = os.path.join(UPLOAD_FOLDER, f"{call_sid}.mp3")
     try:
         # 1. Download
@@ -543,21 +559,48 @@ def home():
 # ── Manual file upload ────────────────────────
 @app.route("/upload", methods=["POST"])
 def upload():
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    file = request.files["file"]
-    if not file.filename:
-        return jsonify({"error": "Empty filename"}), 400
-
-    url = request.form.get("url", "");
+    url = request.form.get("url", "").strip()
     call_id = request.form.get("call_id", 0)
     customer_id = request.form.get("customer_id", 0)
     call_type = request.form.get("call_type", "general")
     language = request.form.get("language", "unknown")
 
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(file_path)
+    # ── Cache check ──────────────────────────────────────────────────────────
+    existing = get_existing_analysis(call_id)
+    if existing:
+        logger.info(f"Cache hit for call_id={call_id} — returning saved analysis")
+        return jsonify(
+            {
+                "message": "Already analysed (cached)",
+                "call_type": call_type,
+                "transcript": existing["transcript"],
+                "analysis": existing["analysis"],
+                "cached": True,
+            }
+        )
+    # ────────────────────────────────────────────────────────────────────────
+
+    file = request.files.get("file")
+
+    if url:
+        # ── Download audio from URL ──────────────
+        filename = url.split("/")[-1].split("?")[0] or "recording.mp3"
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        try:
+            r = req.get(url, timeout=120, stream=True)
+            r.raise_for_status()
+            with open(file_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info(f"Downloaded recording from URL for call_id={call_id}")
+        except Exception as e:
+            return jsonify({"error": f"Failed to download from URL: {e}"}), 400
+    elif file and file.filename:
+        # ── Save uploaded file ───────────────────
+        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        file.save(file_path)
+    else:
+        return jsonify({"error": "Provide either a file or a url"}), 400
 
     try:
         raw_transcript, final_transcript, detected_lang = transcribe_audio(
